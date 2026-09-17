@@ -605,6 +605,21 @@
   .gcash-qr-wrap{display:flex;justify-content:center;}
   .gcash-qr-wrap img{width:180px;height:180px;border-radius:10px;background:#fff;padding:8px;}
 
+  /* ===== Customer Showcase Gallery ===== */
+  .showcase-grid{
+    display:flex;flex-wrap:nowrap;gap:20px;overflow-x:auto;
+    scroll-snap-type:x mandatory;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;
+    padding:4px 4px 14px;margin:0;scrollbar-width:none;
+  }
+  .showcase-grid::-webkit-scrollbar{display:none;}
+  .showcase-card{
+    scroll-snap-align:start;flex:0 0 260px;overflow:hidden;padding:0;
+  }
+  .showcase-media-wrap{width:100%;aspect-ratio:4/5;background:#000;overflow:hidden;}
+  .showcase-media-wrap img, .showcase-media-wrap video{width:100%;height:100%;object-fit:cover;display:block;}
+  .showcase-caption{padding:12px 14px;font-size:0.85rem;color:rgba(234,246,255,0.85);}
+  .showcase-admin-row{display:flex;gap:8px;padding:0 14px 14px;}
+
   /* ===== Testimonials ===== */
   .testimonial-form-card{max-width:560px;margin:0 auto 40px;padding:36px;text-align:center;}
   .testimonial-form-card form{max-width:400px;margin:0 auto;text-align:left;}
@@ -765,6 +780,7 @@
     <a href="#about">About Us</a>
     <a href="#products">Products</a>
     <a href="#testimonials">Reviews</a>
+    <a href="#showcase">Gallery</a>
     <a href="#contact">Contact Us</a>
     <a href="#" id="adminDashNavLink" style="display:none;">Dashboard</a>
     <a href="#" id="openAuthBtn">Sign In</a>
@@ -874,6 +890,22 @@
   <div class="testimonials-list" id="testimonialsList">
     <div class="empty-state">Loading reviews…</div>
   </div>
+</section>
+
+<!-- CUSTOMER SHOWCASE -->
+<section id="showcase">
+  <div class="section-head">
+    <span class="eyebrow">See It In Action</span>
+    <h2>Customer Showcase</h2>
+    <p>Photos and videos of our products and customers using their equipment.</p>
+    <button class="admin-add-btn" id="adminAddShowcaseBtn" style="display:none;">+ Add Photo/Video</button>
+  </div>
+  <div class="product-carousel-viewport">
+    <div class="showcase-grid" id="showcaseGrid">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </div>
+  <div class="carousel-dots" id="showcaseDots"></div>
 </section>
 
 <!-- CONTACT -->
@@ -1078,6 +1110,28 @@
   </div>
 </div>
 
+<!-- ADMIN SHOWCASE MODAL -->
+<div class="modal-overlay" id="showcaseModalOverlay">
+  <div class="modal-box glass">
+    <h3>Add Photo / Video</h3>
+    <form id="showcaseForm">
+      <div class="field"><label>Caption</label><input type="text" id="scCaption" placeholder="e.g. Juan's 4-line vendo install"></div>
+      <div class="field">
+        <label>Photo or Video File</label>
+        <div class="file-drop" id="scFileDrop">Click to select a photo or video
+          <div><img id="scImgPreview" style="display:none;max-width:100%;border-radius:10px;"></div>
+          <div><video id="scVidPreview" style="display:none;max-width:100%;border-radius:10px;" controls></video></div>
+        </div>
+        <input type="file" id="scFile" accept="image/*,video/*" style="display:none;">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="modal-cancel" id="cancelShowcaseModal">Cancel</button>
+        <button type="submit" class="modal-save" id="saveShowcaseBtn">Upload</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- CHECKOUT MODAL -->
 <div class="modal-overlay" id="checkoutModalOverlay">
   <div class="modal-box glass">
@@ -1125,6 +1179,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const PRODUCT_BUCKET = "product-images";
 const PAYMENT_PROOF_BUCKET = "payment-proofs";
+const SHOWCASE_BUCKET = "showcase-media";
 
 const LOGO_DATA_URI = document.querySelector('.brand img').getAttribute('src');
 let currentUser = null;
@@ -1286,7 +1341,10 @@ async function refreshSession(){
   }
   document.getElementById('adminAddBtn').style.display = isAdmin ? 'inline-block' : 'none';
   document.getElementById('adminDashNavLink').style.display = isAdmin ? 'inline-block' : 'none';
+  const scAddBtn = document.getElementById('adminAddShowcaseBtn');
+  if(scAddBtn) scAddBtn.style.display = isAdmin ? 'inline-block' : 'none';
   renderProducts();
+  if(document.getElementById('showcaseGrid')) loadShowcase();
   if(isAdmin) loadDashboard();
 }
 
@@ -1964,11 +2022,191 @@ document.getElementById('testimonialForm').addEventListener('submit', async (e)=
   loadTestimonials();
 });
 
+/* ============ CUSTOMER SHOWCASE (photos/videos) ============ */
+let scSelectedFile = null;
+let showcaseCarouselTimer = null;
+
+const showcaseModalOverlay = document.getElementById('showcaseModalOverlay');
+
+document.getElementById('adminAddShowcaseBtn').addEventListener('click', ()=>{
+  scSelectedFile = null;
+  document.getElementById('showcaseForm').reset();
+  document.getElementById('scImgPreview').style.display = 'none';
+  document.getElementById('scVidPreview').style.display = 'none';
+  showcaseModalOverlay.classList.add('show');
+});
+document.getElementById('cancelShowcaseModal').addEventListener('click', ()=>{
+  showcaseModalOverlay.classList.remove('show');
+});
+document.getElementById('scFileDrop').addEventListener('click', ()=>{
+  document.getElementById('scFile').click();
+});
+document.getElementById('scFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  scSelectedFile = file;
+  const imgPrev = document.getElementById('scImgPreview');
+  const vidPrev = document.getElementById('scVidPreview');
+  const url = URL.createObjectURL(file);
+  if(file.type.startsWith('video/')){
+    vidPrev.src = url; vidPrev.style.display = 'block';
+    imgPrev.style.display = 'none';
+  } else {
+    imgPrev.src = url; imgPrev.style.display = 'block';
+    vidPrev.style.display = 'none';
+  }
+});
+
+document.getElementById('showcaseForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  if(!isAdmin){ showToast('Admin access required'); return; }
+  if(!scSelectedFile){ showToast('Please choose a photo or video first.'); return; }
+
+  const btn = document.getElementById('saveShowcaseBtn');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+
+  const caption = document.getElementById('scCaption').value.trim();
+  const media_type = scSelectedFile.type.startsWith('video/') ? 'video' : 'image';
+
+  try{
+    const ext = (scSelectedFile.name.split('.').pop() || (media_type==='video'?'mp4':'jpg')).toLowerCase();
+    const path = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error: upErr } = await sb.storage.from(SHOWCASE_BUCKET).upload(path, scSelectedFile, { upsert:true });
+    if(upErr) throw upErr;
+    const { data: pub } = sb.storage.from(SHOWCASE_BUCKET).getPublicUrl(path);
+
+    const { error } = await sb.from('showcase_media').insert([{
+      media_type, media_url: pub.publicUrl, caption, is_active: true
+    }]);
+    if(error) throw error;
+
+    showToast('Uploaded!');
+    showcaseModalOverlay.classList.remove('show');
+    loadShowcase();
+  }catch(err){
+    showToast('Error: ' + err.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
+});
+
+async function loadShowcase(){
+  const grid = document.getElementById('showcaseGrid');
+  if(!grid) return;
+  const { data, error } = await sb
+    .from('showcase_media')
+    .select('*')
+    .eq('is_active', true)
+    .order('created_at', { ascending:false });
+
+  if(error){
+    grid.innerHTML = `<div class="empty-state">Could not load gallery.</div>`;
+    return;
+  }
+  if(!data || data.length === 0){
+    grid.innerHTML = `<div class="empty-state">${isAdmin ? 'No photos/videos yet. Click "+ Add Photo/Video" to add one.' : 'No photos or videos yet. Check back soon.'}</div>`;
+    return;
+  }
+
+  grid.innerHTML = data.map(m => {
+    const mediaEl = m.media_type === 'video'
+      ? `<video src="${m.media_url}" muted loop playsinline autoplay preload="metadata"></video>`
+      : `<img src="${m.media_url}" alt="${escapeHtml(m.caption || '')}">`;
+    return `
+      <div class="glass showcase-card" data-id="${m.id}">
+        <div class="showcase-media-wrap">${mediaEl}</div>
+        ${m.caption ? `<p class="showcase-caption">${escapeHtml(m.caption)}</p>` : ''}
+        ${isAdmin ? `<div class="showcase-admin-row"><button class="mini-btn danger sc-delete-btn" data-id="${m.id}" style="flex:1;">Delete</button></div>` : ''}
+      </div>
+    `;
+  }).join('');
+
+  grid.querySelectorAll('.sc-delete-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if(!confirm('Remove this photo/video?')) return;
+      const { error } = await sb.from('showcase_media').delete().eq('id', btn.dataset.id);
+      if(error){ showToast('Error: ' + error.message); return; }
+      showToast('Removed');
+      loadShowcase();
+    });
+  });
+
+  setupShowcaseCarousel();
+}
+
+function setupShowcaseCarousel(){
+  const grid = document.getElementById('showcaseGrid');
+  const dotsWrap = document.getElementById('showcaseDots');
+  if(!grid) return;
+
+  clearInterval(showcaseCarouselTimer);
+  showcaseCarouselTimer = null;
+
+  const cards = grid.querySelectorAll('.showcase-card');
+  if(dotsWrap) dotsWrap.innerHTML = '';
+  if(cards.length <= 1) return;
+
+  if(dotsWrap){
+    cards.forEach((_, i)=>{
+      const dot = document.createElement('div');
+      dot.className = 'dot' + (i===0 ? ' active' : '');
+      dotsWrap.appendChild(dot);
+    });
+  }
+
+  function cardStep(){
+    const card = grid.querySelector('.showcase-card');
+    if(!card) return 0;
+    const style = getComputedStyle(grid);
+    const gap = parseFloat(style.columnGap || style.gap || 0) || 0;
+    return card.getBoundingClientRect().width + gap;
+  }
+  function currentIndex(){
+    const step = cardStep();
+    if(!step) return 0;
+    return Math.round(grid.scrollLeft / step);
+  }
+  function updateDots(){
+    if(!dotsWrap) return;
+    const idx = Math.min(currentIndex(), cards.length - 1);
+    dotsWrap.querySelectorAll('.dot').forEach((d, i)=> d.classList.toggle('active', i === idx));
+  }
+  function scrollToCard(i){
+    const step = cardStep();
+    const clamped = Math.max(0, Math.min(i, cards.length - 1));
+    grid.scrollTo({ left: clamped * step, behavior: 'smooth' });
+  }
+  function advance(){
+    const maxScroll = grid.scrollWidth - grid.clientWidth;
+    if(grid.scrollLeft >= maxScroll - 5){
+      grid.scrollTo({ left: 0, behavior: 'smooth' });
+    } else {
+      scrollToCard(currentIndex() + 1);
+    }
+  }
+  function restartAutoplay(){
+    clearInterval(showcaseCarouselTimer);
+    showcaseCarouselTimer = setInterval(advance, 3000);
+  }
+
+  grid.addEventListener('mouseenter', ()=> clearInterval(showcaseCarouselTimer));
+  grid.addEventListener('mouseleave', restartAutoplay);
+  grid.addEventListener('touchstart', ()=> clearInterval(showcaseCarouselTimer), { passive:true });
+  grid.addEventListener('touchend', restartAutoplay);
+  grid.addEventListener('scroll', ()=>{
+    clearTimeout(grid._scDotTimer);
+    grid._scDotTimer = setTimeout(updateDots, 80);
+  }, { passive:true });
+
+  restartAutoplay();
+}
+
 /* ============ INIT ============ */
 (async function init(){
   await refreshSession();
   await loadProducts();
   await loadTestimonials();
+  await loadShowcase();
 })();
 </script>
 
